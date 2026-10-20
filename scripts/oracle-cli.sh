@@ -362,6 +362,24 @@ cmd_init() {
   info "Contract initialized"
 }
 
+cmd_verify_review() {
+  # oracle-cli verify-review --payload <json> --approval <json> [--environment production]
+  # #686: refuse a privileged payload that differs from its reviewed simulation.
+  local payload="" approval="" environment="production"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --payload)     payload="$2";     shift 2 ;;
+      --approval)    approval="$2";    shift 2 ;;
+      --environment) environment="$2"; shift 2 ;;
+      *) die "Unknown flag: $1" ;;
+    esac
+  done
+  [[ -n "$payload" ]]  || die "--payload is required"
+  [[ -n "$approval" ]] || die "--approval is required"
+  PYTHONPATH="${ORACLE_REPO_ROOT:-.}" python3 -m services.tx_review.gate verify \
+    --payload "$payload" --approval "$approval" --environment "$environment"
+}
+
 # ── usage ─────────────────────────────────────────────────────────────────────
 usage() {
   cat <<'EOF'
@@ -387,6 +405,7 @@ COMMANDS:
   oracle-state-diff Compare two contract states
   soroswap-price    Get Soroswap pool price for an asset
   dex-price         Get Stellar DEX price for an asset
+  verify-review     Refuse a privileged payload that differs from its review (#686)
 
 EXAMPLES:
   export ORACLE_CONTRACT_ID=CAAAA...
@@ -428,6 +447,7 @@ main() {
     oracle-state-diff)    cmd_oracle_state_diff    "$@" ;;
     soroswap-price)       cmd_soroswap_price       "$@" ;;
     dex-price)            cmd_dex_price            "$@" ;;
+    verify-review)        cmd_verify_review        "$@" ;;
     -h|--help|help)       usage ;;
     *) die "Unknown command: $cmd. Run 'oracle-cli help' for usage." ;;
   esac

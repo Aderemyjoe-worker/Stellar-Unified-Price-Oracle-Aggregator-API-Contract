@@ -2,8 +2,13 @@
 
     python -m services.indexer.explorer --db oracle-index.db --port 8088
 
-Endpoints: `/` (HTML), `/api/sources`, `/api/gaps`, `/api/history?asset=A`,
+Endpoints: `/` (HTML), `/api/sources`, `/api/gaps`, `/api/rejections`,
+`/api/reorgs`, `/api/history?asset=A`,
 `/api/provenance?asset=A&ledger=L&event_index=I`.
+
+`/api/rejections` is the audit trail for #685: every event the trust policy
+refused, with its reason code. It is deliberately separate from `/api/gaps`,
+which covers ledgers that were never delivered.
 """
 from __future__ import annotations
 
@@ -22,6 +27,10 @@ def route(idx: Indexer, path: str, query: dict) -> tuple[int, str, str]:
         return 200, "application/json", json.dumps(idx.sources())
     if path == "/api/gaps":
         return 200, "application/json", json.dumps(idx.gaps())
+    if path == "/api/rejections":
+        return 200, "application/json", json.dumps(idx.rejections())
+    if path == "/api/reorgs":
+        return 200, "application/json", json.dumps(idx.reorgs())
     if path == "/api/history" and "asset" in q:
         return 200, "application/json", json.dumps(idx.history(q["asset"], int(q.get("limit", 100))))
     if path == "/api/provenance" and {"asset", "ledger", "event_index"} <= q.keys():
@@ -42,8 +51,11 @@ def render_index(idx: Indexer, asset: str | None) -> str:
         status = "removed @%s" % s["removed_ledger"] if s["removed_ledger"] else "active"
         parts.append(f"<li>{e(s['source'])} ({e(str(s['name']))}) — {status}</li>")
     parts.append("</ul>")
+    parts.append(f"<p><b>Trusted ledger:</b> {e(str(idx.trusted_ledger))}</p>")
     if idx.gaps():
         parts.append(f"<p><b>Gaps:</b> {e(str(idx.gaps()))}</p>")
+    if idx.rejections():
+        parts.append(f"<p><b>Rejected events:</b> {e(str(idx.rejections()))}</p>")
     if asset:
         parts.append("<h2>History</h2><table border=1><tr><th>ledger</th><th>price</th>"
                      "<th>sources</th><th>recomputed</th><th>provenance</th></tr>")

@@ -13,6 +13,11 @@
 #   mutation-gate       - mutation gate self-test, no cargo-mutants needed (#520)
 #   mutation-per-module - per-module mutation scores and thresholds (#520)
 #   hermetic           - hermetic integration harness, verifies determinism (#519)
+#   rpc-gate           - RPC response trust boundary fixture corpus (#684)
+#   indexer-trust      - indexer authenticity + gap-safe cursor suite (#685)
+#   tx-review-gate     - privileged transaction tamper corpus (#686)
+#   redaction-gate     - incident evidence redaction, fail-closed (#687)
+#   trust-boundary     - all four off-chain trust boundaries above
 #   sast               - SAST + advisory + unsafe-baseline gate (#500)
 #   secret-scan        - secret scan of the tree, with a history report (#502)
 #   check-pins         - every dependency pinned exactly, lockfile in sync (#501)
@@ -25,7 +30,8 @@
 # plain `cargo test` filters over the contract's test binary.
 .PHONY: all build test lint fmt check clean watch gas-gate load-test \
         mutation-gate mutation-per-module hermetic sast secret-scan \
-        check-pins reproducible-build security
+        check-pins reproducible-build security rpc-gate indexer-trust \
+        tx-review-gate redaction-gate trust-boundary
 
 all: build test
 
@@ -79,6 +85,28 @@ reproducible-build:
 # Everything the three hardening issues gate on, plus their test suites.
 security: sast secret-scan check-pins
 	python3 -m pytest services/static_analysis services/secret_scan services/pinned_deps -q
+
+# #684: replay the RPC response fixture corpus. Fails if a documented
+# rejection class stops being rejected, or a valid response stops being accepted.
+rpc-gate:
+	python3 -m services.rpc_guard.gate --report security-artifacts/rpc-boundary.md
+
+# #685: spoofed events, ledger continuity and cursor safety.
+indexer-trust:
+	python3 -m pytest services/indexer -q
+
+# #686: privileged transaction review; every tampered payload must be refused.
+tx-review-gate:
+	python3 -m services.tx_review.gate replay --report security-artifacts/tx-review.md
+
+# #687: incident evidence redaction, including the fail-closed paths.
+redaction-gate:
+	python3 -m services.evidence_redaction.gate --report security-artifacts/redaction.md
+
+# All four off-chain trust boundaries, plus their unit tests.
+trust-boundary: rpc-gate indexer-trust tx-review-gate redaction-gate
+	python3 -m pytest services/rpc_guard services/indexer services/tx_review \
+		services/evidence_redaction -q
 
 # Run clippy linter
 lint:
