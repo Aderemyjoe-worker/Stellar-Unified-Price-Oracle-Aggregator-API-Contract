@@ -12,6 +12,20 @@ Input is the canonical event envelope ([event-streaming](event-streaming/README.
 one JSON object per line, optionally carrying `event_index` (position within the
 ledger; defaults to arrival order) and `ledger_hash` (enables reorg detection).
 
+## Authenticity (#685)
+
+Every event is verified before the first write: the contract id must be the one
+the store indexes (pinned on first ingest, or fixed with `--contract-id`), the
+ledger must be positive and at or above the configured floor, the topic must be
+one the indexer interprets, and a ledger's close time may not go backwards.
+A refused event is recorded in `rejected` with a bounded reason code and never
+moves the cursor. Details and the full rejection table:
+[security/indexer-authenticity.md](security/indexer-authenticity.md).
+
+```bash
+python3 -m services.indexer.indexer events.jsonl --db oracle-index.db --contract-id CDEMO...
+```
+
 ## What it materializes
 
 | Table | From topic | Used for |
@@ -38,25 +52,40 @@ safest choice is always "from the last cursor minus a few ledgers".
 Ledgers must arrive contiguously. If a batch jumps past `cursor + 1`:
 
 1. the missing range is recorded in `gaps`;
-2. `ingest` raises `GapError` (pass `--allow-gaps` to keep going and fill later);
-3. replaying the missing ledgers deletes the gap row.
+2. `ingest` raises `GapError` and does **not** store the jumping event (pass
+   `--allow-gaps` to keep going and backfill);
+3. replaying the missing ledgers closes the gap — splitting it when only part of
+   the interval arrives.
+
+Two cursors, because they answer different questions:
+
+* `cursor` — highest ledger ingested; the resume point for a replay.
+* `trusted_ledger` — highest ledger with no open gap before it; the point a
+  consumer may rely on for a complete history. It never moves past a missing
+  interval, including when `--allow-gaps` was used.
 
 While a gap is open, aggregates after it may have incomplete provenance; the
-explorer shows open gaps on its index page.
+explorer shows open gaps and the trusted ledger on its index page.
 
 ## Reorgs
 
 When a ledger arrives with a `ledger_hash` different from the stored one, all
 data from that ledger onwards is rolled back (`rollback_to`) and rebuilt from the
-new events.
+new events, and the replacement is recorded in `reorgs` (`GET /api/reorgs`).
+Two different hashes for the same ledger *inside one batch* are rejected as
+contradictory input rather than treated as a reorg.
 
 ## Explorer
 
-`/` renders sources, gaps and, for `?asset=`, the price history with the
-contributing submissions per row. JSON: `/api/sources`, `/api/gaps`,
+`/` renders sources, the trusted ledger, gaps, rejected events and, for
+`?asset=`, the price history with the contributing submissions per row. JSON:
+`/api/sources`, `/api/gaps`, `/api/rejections`, `/api/reorgs`,
 `/api/history?asset=`, `/api/provenance?asset=&ledger=&event_index=`.
 
 ## CI
 
 The `indexer` job runs `services/indexer/test` (on-chain aggregate reproduction,
-idempotent replay, restart, gap, reorg, explorer) alongside the hermetic harness job.
+idempotent replay, restart, gap, reorg, explorer) alongside the hermetic harness
+job. `make indexer-trust` runs the same suite as a named check, including the
+authenticity cases: spoofed contract event, missing ledger interval with an
+unchanged cursor, and a batch with conflicting ledger hashes.

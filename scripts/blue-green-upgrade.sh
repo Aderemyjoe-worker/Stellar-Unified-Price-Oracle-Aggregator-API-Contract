@@ -5,10 +5,16 @@
 #   ./scripts/blue-green-upgrade.sh upgrade  --contract <ID> --admin <IDENTITY> --wasm <PATH> [--network testnet]
 #   ./scripts/blue-green-upgrade.sh rollback --contract <ID> --admin <IDENTITY> --blue-hash <HASH> [--network testnet]
 #
+#   ./scripts/blue-green-upgrade.sh upgrade ... --payload <JSON> --approval <JSON>
+#
 # Environment:
 #   EXPECTED_SCHEMA   schema version the green build targets (checked by the sweep)
 #   BATCH_SIZE        migration batch size (default 50)
 #   ABORT_AFTER       testing only: stop after N migration batches to simulate an abort
+#   ORACLE_REQUIRE_TX_REVIEW  set to 1 to require --payload/--approval on every
+#                     privileged call (#686). `--network mainnet` enforces it
+#                     without the variable; set it for any other production network.
+#   REVIEW_ENVIRONMENT  review policy to apply (default: production)
 #
 # The blue WASM hash is recorded in .blue-green/<CONTRACT_ID>.blue before every
 # upgrade. Rollback requires the multisig quorum documented in
@@ -26,6 +32,8 @@ while [[ $# -gt 0 ]]; do
         --wasm)      WASM="$2"; shift 2 ;;
         --blue-hash) BLUE_HASH="$2"; shift 2 ;;
         --network)   NETWORK="$2"; shift 2 ;;
+        --payload)   REVIEW_PAYLOAD="$2"; shift 2 ;;
+        --approval)  REVIEW_APPROVAL="$2"; shift 2 ;;
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -42,6 +50,29 @@ invoke() {
 verify() {
     "$SCRIPT_DIR/verify-deployment.sh" --contract "$CONTRACT_ID" \
         --admin "$ADMIN_IDENTITY" --network "$NETWORK"
+}
+
+require_review() {
+    # #686: a privileged production payload is signed only if it is the exact
+    # payload that was simulated and independently reviewed. Enforced by default
+    # on mainnet and whenever the operator asks for it, so a production upgrade
+    # without a reviewed simulation fails instead of quietly signing. Testnet
+    # drills and dry runs keep working unchanged.
+    if [[ "${ORACLE_REQUIRE_TX_REVIEW:-0}" != "1" && "$NETWORK" != "mainnet" \
+          && -z "${REVIEW_PAYLOAD:-}" && -z "${REVIEW_APPROVAL:-}" ]]; then
+        return 0
+    fi
+    if [[ -z "${REVIEW_PAYLOAD:-}" || -z "${REVIEW_APPROVAL:-}" ]]; then
+        echo "[FAIL] --payload and --approval are both required when review is enforced." >&2
+        exit 1
+    fi
+    if ! PYTHONPATH="$SCRIPT_DIR/.." python3 -m services.tx_review.gate verify \
+        --payload "$REVIEW_PAYLOAD" --approval "$REVIEW_APPROVAL" \
+        --environment "${REVIEW_ENVIRONMENT:-production}" > /dev/null; then
+        echo "[FAIL] payload differs from its reviewed simulation; refusing to sign." >&2
+        exit 1
+    fi
+    echo "[review] payload matches its reviewed simulation"
 }
 
 migrate() {
@@ -66,6 +97,7 @@ case "$CMD" in
         sha256sum "$STATE_DIR/blue.wasm" | cut -d' ' -f1 > "$STATE_DIR/$CONTRACT_ID.blue"
         echo "[3/5] Installing green WASM"
         GREEN_HASH=$(stellar contract upload --wasm "$WASM" --source "$ADMIN_IDENTITY" --network "$NETWORK")
+        require_review
         invoke upgrade --new_wasm_hash "$GREEN_HASH"
         echo "[4/5] Migrating storage"; migrate
         echo "[5/5] Post-upgrade invariant sweep (green)"
@@ -81,6 +113,7 @@ case "$CMD" in
             echo "[FAIL] migration in progress: finish it (re-run upgrade) before rolling back." >&2
             exit 1
         fi
+        require_review
         invoke upgrade --new_wasm_hash "$BLUE_HASH"
         verify
         ;;

@@ -225,6 +225,44 @@ This document lists all items that must be reviewed or completed before a profes
 
 ---
 
+## 8. Off-Chain Trust Boundaries
+
+**Relevant files:** `services/rpc_guard/`, `services/indexer/`, `services/tx_review/`, `services/evidence_redaction/`, `scripts/evidence.sh`, `scripts/blue-green-upgrade.sh`
+
+These are the boundaries between untrusted input and an operational decision,
+and they are part of the audit scope even though they are not contract code.
+
+### RPC responses (#684)
+- [ ] `accept_network` validates the passphrase and protocol window before any ledger is read
+- [ ] `accept_ledger` validates sequence, 64-hex hash, protocol consistency, close-time monotonicity, regression and same-height reorgs
+- [ ] `accept_transaction` treats `NOT_FOUND` as a rejection, rejects results from another ledger or another transaction hash, and requires envelope/result/meta for a successful result
+- [ ] Every rejection carries a closed-enum code and a bounded detail that does not echo the received value
+- [ ] `make rpc-gate` replays the fixture corpus and fails on any relaxed check
+
+### Indexer event authenticity (#685)
+- [ ] Contract identity is pinned (configured, or first accepted) and persisted across restarts
+- [ ] A spoofed event is rejected, recorded in `rejected`, and does not move the cursor
+- [ ] A missing ledger interval fails closed by default; `--allow-gaps` does not advance `trusted_ledger`
+- [ ] Replaying one ledger of a gap splits the interval instead of closing it
+- [ ] Conflicting hashes within one batch are rejected; a reorg is rolled back and recorded
+
+### Privileged transaction review (#686)
+- [ ] Payloads are canonicalised, and unknown fields / untyped arguments / unmodelled functions are refused
+- [ ] The approval is bound to the payload digest *and* to the rendered summary a reviewer read
+- [ ] The simulation carries the same digest and network, reports success, and stays inside the fee cap
+- [ ] Production requires at least two distinct reviewers, none of them the requester, inside a capped review window
+- [ ] `make tx-review-gate` refuses every tampered case in the corpus
+- [ ] Production upgrade/rollback sets `ORACLE_REQUIRE_TX_REVIEW=1`
+
+### Evidence redaction (#687)
+- [ ] Incident artifacts are produced through `scripts/evidence.sh` or the redaction CLI, never by hand
+- [ ] Disabling redaction raises / exits non-zero and writes no artifact
+- [ ] Reports contain rule ids, line numbers and counts only — no matched values
+- [ ] Fixtures are generated at runtime, so no key-shaped string is committed
+- [ ] `make redaction-gate` passes (redaction, idempotency, fail-closed)
+
+---
+
 ## Pre-Audit Completion Checklist
 
 Before scheduling the audit engagement, confirm:

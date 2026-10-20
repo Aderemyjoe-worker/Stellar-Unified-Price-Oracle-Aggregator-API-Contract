@@ -149,6 +149,28 @@ inconsistent state (e.g., `PriceHistoryLedgers` out of sync with actual `PriceHi
 
 ---
 
+## Capturing Evidence Safely
+
+An incident review needs logs, contract state and environment details, and those
+are exactly the places a key ends up. Collect them through the redaction filter:
+
+```bash
+./scripts/evidence.sh --out incident-artifacts/evidence.md app.log rpc.log
+```
+
+The script captures the environment, a contract state dump and the last 2000
+lines of each log, pipes the bundle through
+[`services/evidence_redaction`](../services/evidence_redaction/) and writes a
+redaction report beside it. Redaction cannot be disabled — if the filter is
+unavailable the script fails and writes nothing, so raw evidence never lands in
+an artifact bucket. See
+[security/evidence-redaction.md](security/evidence-redaction.md).
+
+Never attach raw `stellar contract invoke` output, `env` dumps or RPC error
+bodies to a ticket.
+
+---
+
 ## Emergency Contacts and Runbook Reference
 
 | Role | Action |
@@ -158,3 +180,9 @@ inconsistent state (e.g., `PriceHistoryLedgers` out of sync with actual `PriceHi
 | Consumer relations | Notify dependent contracts / dApps |
 
 For deployment commands and RPC endpoint configuration, see `scripts/verify-deployment.sh`.
+
+For a privileged recovery call (`upgrade`, `set_admin`, `unpause`), the payload
+must be simulated and independently reviewed before it is signed — see
+[security/privileged-transaction-review.md](security/privileged-transaction-review.md).
+Validate the RPC responses the recovery depends on before acting on them
+([security/rpc-trust-boundary.md](security/rpc-trust-boundary.md)).
